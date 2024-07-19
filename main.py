@@ -4,6 +4,8 @@ from telebot import types
 import pyautogui
 from esteganografia import encode_command_in_image, decode_command_from_image
 
+import sqlite3
+
 # Conexión con nuestro BOT
 TOKEN = '7350752233:AAFZTB3HMBbzbFMHh0-7q3XDbKnDb-ExWLg'
 bot = telebot.TeleBot(TOKEN)
@@ -179,4 +181,4 @@ def handle_all_messages(message):
     send_instructions(message.chat.id)
 
 if __name__ == "__main__":
-    bot.polling(none_stop=True)
+    bot.polling(none_stop=True) 
